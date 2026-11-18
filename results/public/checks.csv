@@ -1,0 +1,195 @@
+workload,check_id,kind,path,description,prerequisites,aws_outcomes_5_runs,aws_error_code,class_aws-emulator,class_floci,class_ministack
+W1,W1-C01,control,normal,Create the dead-letter queue and read its ARN,,passx5,,match,match,match
+W1,W1-C02,control,normal,Create the main queue with a redrive policy (maxReceiveCount 2) and 20 s visibility timeout,W1-C01,passx5,,match,match,match
+W1,W1-C03,control,normal,Main queue attributes return the redrive policy and visibility timeout as set,W1-C02,passx5,,match,mismatch,mismatch
+W1,W1-C04,control,normal,Create an on-demand DynamoDB table and wait for ACTIVE,,passx5,,match,match,match
+W1,W1-C05,control,normal,DescribeTable reports on-demand billing and the pk hash key,W1-C04,passx5,,match,match,match
+W1,W1-C06,control,normal,Create the Lambda execution role with an inline policy,W1-C02 W1-C04,passx5,,match,match,match
+W1,W1-C07,control,normal,Create the Python 3.12 function and wait for State Active,W1-C06,passx5,,match,match,match
+W1,W1-C08,control,normal,"GetFunctionConfiguration returns runtime, handler, timeout, memory and env vars as set",W1-C07,passx5,,match,match,match
+W1,W1-C09,control,normal,"Create the SQS event source mapping (batch 5, ReportBatchItemFailures)",W1-C07,passx5,,match,match,match
+W1,W1-C10,control,normal,The event source mapping reaches State Enabled,W1-C09,passx5,,match,match,match
+W1,W1-C11,control,normal,ListEventSourceMappings returns exactly this mapping with its settings,W1-C09,passx5,,match,match,match
+W1,W1-C12,data,normal,SendMessage returns a MessageId and the correct MD5 of the body,W1-C02,passx5,,match,match,match
+W1,W1-C13,data,normal,"SendMessageBatch of 10 reports 10 successful, 0 failed",W1-C02,passx5,,match,match,match
+W1,W1-C14,data,negative,SendMessage to a queue that does not exist raises an error,W1-C02,passx5,AWS.SimpleQueueService.NonExistentQueue,match,match,match
+W1,W1-C15,data,normal,GetItem for a missing key returns no Item,W1-C04,passx5,,match,match,match
+W1,W1-C16,data,negative,A second conditional PutItem (attribute_not_exists) raises ConditionalCheckFailedException,W1-C04,passx5,ConditionalCheckFailedException,match,match,match
+W1,W1-C17,data,normal,Direct Invoke with a synthetic SQS event returns 200 and no batch item failures,W1-C07,passx5,,match,match,match
+W1,W1-C18,data,negative,Invoke with a payload the handler can't read returns FunctionError,W1-C07,passx5,,match,match,match
+W1,W1-C19,functional,normal,A sent message becomes a DynamoDB item via the mapping,W1-C10 W1-C12,passx5,,match,match,match
+W1,W1-C20,functional,normal,"The item's amount, run marker and message ID match the message",W1-C19,passx5,,match,match,match
+W1,W1-C21,functional,normal,All 10 batch messages become items,W1-C10 W1-C13,passx5,,match,match,match
+W1,W1-C22,functional,normal,The main queue drains to 0 visible and 0 in-flight messages,W1-C10 W1-C13,passx5,,match,match,match
+W1,W1-C23,functional,normal,A poison message reaches the DLQ after maxReceiveCount receives,W1-C10,passx5,,match,match,match
+W1,W1-C24,functional,normal,The poison message is never written to the table,W1-C23,passx5,,match,match,match
+W1,W1-C25,functional,normal,The DLQ message body equals the original body,W1-C23,passx5,,match,match,match
+W1,W1-C26,functional,normal,"Partial batch failure: 4 good items written, only the poison message goes to the DLQ",W1-C10,passx5,,match,match,match
+W1,W1-C27,functional,normal,The function's log lines appear in CloudWatch Logs,W1-C19,passx5,,match,match,match
+W1,W1-C28,functional,normal,A disabled mapping leaves a new message in the queue,W1-C10 W1-C22,failx1/passx4,,flaky,flaky,flaky
+W1,W1-C29,functional,normal,Re-enabling the mapping processes the waiting message,W1-C28,blockedx1/passx4,,flaky,flaky,flaky
+W1,W1-C30,control,normal,"Delete the mapping, function, table, queues and role without errors",W1-C07,passx5,,match,match,match
+W1,W1-C31,control,normal,"After deletion, the table, function and queue report not found",W1-C30,passx5,,match,match,match
+W1,W1-C32,data,negative,SendMessage with DelaySeconds 901 (max is 900) is rejected,W1-C01,passx5,InvalidParameterValue,match,match,false_success_a
+W1,W1-C33,data,negative,SendMessageBatch with two entries sharing one Id is rejected,W1-C01,passx5,AWS.SimpleQueueService.BatchEntryIdsNotDistinct,match,false_success_a,match
+W1,W1-C34,control,negative,CreateQueue with a redrive policy naming a dead-letter queue that does not exist is rejected,W1-C01,passx5,InvalidParameterValue,match,false_success_a,mismatch
+W1,W1-C35,data,negative,PutItem without the table's key attribute is rejected,W1-C04,passx5,ValidationException,match,match,match
+W1,W1-C36,control,negative,CreateTable with the name of an existing table is rejected,W1-C04,passx5,ResourceInUseException,match,match,match
+W1,W1-C37,control,negative,An event source mapping on a queue whose visibility timeout (5 s) is below the function timeout (10 s) is rejected,W1-C07,passx5,InvalidParameterValueException,match,false_success_a,false_success_a
+W2,W2-C01,control,normal,Create the Lambda execution role,,passx5,,match,match,match
+W2,W2-C02,control,normal,Create the Python 3.12 worker function and wait for State Active,W2-C01,passx5,,match,match,match
+W2,W2-C03,control,normal,Create the Step Functions role allowed to invoke the worker,W2-C02,passx5,,match,match,match
+W2,W2-C04,control,normal,ValidateStateMachineDefinition returns OK for the W2 definition,W2-C02,passx5,,match,match,match
+W2,W2-C05,control,normal,CreateStateMachine (STANDARD) returns a state machine ARN,W2-C03,passx5,,false_success_b,match,match
+W2,W2-C06,control,normal,"DescribeStateMachine reports ACTIVE, STANDARD and the same definition",W2-C05,passx5,,match,match,match
+W2,W2-C07,control,normal,ListStateMachines includes the new state machine,W2-C05,passx5,,match,match,match
+W2,W2-C08,data,normal,StartExecution returns an execution ARN and a start date,W2-C05,passx5,,match,match,match
+W2,W2-C09,functional,normal,The happy-path execution reaches SUCCEEDED,W2-C08,passx5,,false_failure,match,match
+W2,W2-C10,functional,normal,Its output carries batch_id and value 42 read back from Assign variables,W2-C09,passx5,,blocked,match,match
+W2,W2-C11,functional,normal,Its history shows the Wait state lasting at least 2 s and one Lambda attempt,W2-C09,passx5,,blocked,match,match
+W2,W2-C12,functional,normal,An execution whose Lambda fails twice with TransientError reaches SUCCEEDED,W2-C05,passx5,,false_failure,match,match
+W2,W2-C13,functional,normal,Retry fired exactly twice: 3 Lambda attempts in history and attempt 2 in the output,W2-C12,passx5,,blocked,match,match
+W2,W2-C14,functional,normal,A caught PermanentError ends FAILED with the Fail state's error and cause,W2-C05,passx5,,false_failure,match,match
+W2,W2-C15,functional,normal,PermanentError is not retried: one Lambda attempt in history,W2-C14,passx5,,blocked,match,match
+W2,W2-C16,functional,normal,When retries run out the execution ends FAILED with error TransientError after 4 attempts,W2-C05,passx5,,false_failure,match,match
+W2,W2-C17,functional,normal,Choice routes mode skip to the Succeed state without calling Lambda,W2-C05,passx5,,false_failure,match,match
+W2,W2-C18,data,normal,StopExecution on a waiting execution ends it ABORTED,W2-C05,passx5,,match,match,match
+W2,W2-C19,control,negative,CreateStateMachine whose StartAt names a missing state is rejected,W2-C05,passx5,InvalidDefinition,match,match,false_success_a
+W2,W2-C20,control,negative,ValidateStateMachineDefinition returns FAIL for a Choice state with no Choices,W2-C05,passx5,,false_success_a,match,false_success_a
+W2,W2-C21,control,negative,CreateStateMachine with States.ALL not last in a Retry list is rejected,W2-C05,passx5,InvalidDefinition,match,false_success_a,false_success_a
+W2,W2-C22,control,negative,CreateStateMachine with a Fail state that has Next is rejected,W2-C05,passx5,InvalidDefinition,match,false_success_a,false_success_a
+W2,W2-C23,control,negative,CreateStateMachine with a Wait state that sets both Seconds and Timestamp is rejected,W2-C05,passx5,InvalidDefinition,false_success_a,false_success_a,false_success_a
+W2,W2-C24,control,negative,CreateStateMachine reusing the name with a different definition is rejected,W2-C05,passx5,StateMachineAlreadyExists,match,match,match
+W2,W2-C25,data,negative,StartExecution with a name containing a space is rejected,W2-C05,passx5,InvalidName,match,false_success_a,false_success_a
+W2,W2-C26,data,negative,StartExecution with input that is not JSON is rejected,W2-C05,passx5,InvalidExecutionInput,match,false_success_a,false_success_a
+W2,W2-C27,data,negative,StartExecution reusing a closed execution's name with different input is rejected,W2-C09,passx5,ExecutionAlreadyExists,blocked,match,match
+W2,W2-C28,control,normal,"Delete the state machine, function and roles without errors",W2-C05,passx5,,match,match,match
+W2,W2-C29,control,normal,"After deletion, the state machine and function report not found",W2-C28,passx5,,match,mismatch,mismatch
+W3,W3-C01,control,normal,CreateKey with tags returns an enabled symmetric ENCRYPT_DECRYPT key,,passx5,,match,match,match
+W3,W3-C02,control,normal,CreateAlias points an alias at the key and ListAliases shows it,W3-C01,passx5,,match,match,match
+W3,W3-C03,data,normal,Encrypt through the alias and Decrypt with the same encryption context round-trips,W3-C02,passx5,,match,match,match
+W3,W3-C04,data,normal,GenerateDataKey AES_256 returns 32 bytes whose ciphertext decrypts to the same bytes,W3-C01,passx5,,match,match,match
+W3,W3-C05,control,normal,PutParameter String creates version 1 in the Standard tier,,passx5,,match,mismatch,match
+W3,W3-C06,data,normal,A SecureString encrypted with the study key reads back decrypted,W3-C02,passx5,,match,match,match
+W3,W3-C07,data,normal,Reading the SecureString without decryption does not return the plaintext,W3-C06,passx5,,match,match,match
+W3,W3-C08,control,normal,DescribeParameters reports the SecureString's KMS key,W3-C06,passx5,,match,match,match
+W3,W3-C09,functional,normal,Overwriting a parameter creates version 2 and GetParameterHistory shows both,W3-C05,passx5,,match,match,match
+W3,W3-C10,functional,normal,GetParametersByPath returns 3 parameters recursively and 2 without recursion,W3-C06,passx5,,match,match,match
+W3,W3-C11,data,normal,GetParameters with one missing name returns the found one and lists the missing one,W3-C05,passx5,,match,match,match
+W3,W3-C12,data,normal,A StringList parameter reads back with its type and comma-separated value,,passx5,,match,match,match
+W3,W3-C13,control,normal,CreateSecret with the study key returns an ARN with the 6-character suffix,W3-C02,passx5,,match,match,match
+W3,W3-C14,data,normal,GetSecretValue returns the JSON string with stage AWSCURRENT,W3-C13,passx5,,match,match,match
+W3,W3-C15,control,normal,DescribeSecret reports the study key and the tags,W3-C13,passx5,,match,match,match
+W3,W3-C16,functional,normal,PutSecretValue moves AWSCURRENT to the new value and AWSPREVIOUS to the old one,W3-C14,passx5,,match,match,match
+W3,W3-C17,functional,normal,ListSecretVersionIds shows both versions with their stages,W3-C16,passx5,,match,match,match
+W3,W3-C18,data,normal,GetRandomPassword returns 32 characters with no punctuation when asked,,passx5,,match,match,match
+W3,W3-C19,functional,normal,A secret scheduled for deletion cannot be read (InvalidRequestException),W3-C16,passx5,,match,match,match
+W3,W3-C20,functional,normal,RestoreSecret makes the secret readable again,W3-C19,passx5,,match,match,match
+W3,W3-C21,data,negative,PutParameter on an existing name without Overwrite is rejected,W3-C05,passx5,ParameterAlreadyExists,match,match,match
+W3,W3-C22,data,negative,GetParameter on a name that does not exist is rejected,,passx5,ParameterNotFound,match,match,match
+W3,W3-C23,data,negative,A Standard-tier String parameter over 4096 characters is rejected,,passx5,ValidationException,match,false_success_a,false_success_a
+W3,W3-C24,data,negative,A value that breaks the parameter's AllowedPattern is rejected,,passx5,ParameterPatternMismatchException,match,match,false_success_a
+W3,W3-C25,data,negative,A parameter name containing a space is rejected,,passx5,ValidationException,match,match,false_success_a
+W3,W3-C26,control,negative,CreateSecret with a name that already exists is rejected,W3-C13,passx5,ResourceExistsException,match,match,match
+W3,W3-C27,control,negative,DeleteSecret with a recovery window of 3 days (minimum 7) is rejected,,passx5,InvalidParameterException,match,match,match
+W3,W3-C28,data,negative,CreateSecret with both SecretString and SecretBinary is rejected,,passx5,InvalidParameterException,match,match,false_success_a
+W3,W3-C29,data,negative,Decrypt with a different encryption context is rejected,W3-C03,passx5,InvalidCiphertextException,match,match,match
+W3,W3-C30,data,negative,Encrypt with more than 4096 bytes of plaintext is rejected,W3-C01,passx5,ValidationException,match,match,false_success_a
+W3,W3-C31,control,negative,ScheduleKeyDeletion with a 6-day window (minimum 7) is rejected,W3-C01,passx5,ValidationException,match,false_success_a,match
+W3,W3-C32,control,normal,"Delete the parameters, the secret and the alias, and schedule the key for deletion",W3-C01,passx5,,match,match,match
+W3,W3-C33,control,normal,After teardown the parameters and secret are gone and the key is PendingDeletion,W3-C32,passx5,,match,match,match
+W3,W3-C34,data,negative,Encrypt with a key that is pending deletion is rejected,W3-C32,passx5,KMSInvalidStateException,match,match,match
+W4,W4-C01,control,normal,CreateQueue creates the four target queues and each reports a QueueArn,,passx5,,match,match,match
+W4,W4-C02,control,normal,PutRule on the default bus is ENABLED and DescribeRule returns the same event pattern,W4-C01,passx5,,match,match,match
+W4,W4-C03,control,normal,PutTargets adds the queue to the rule and ListTargetsByRule shows it,W4-C02,passx5,,match,match,match
+W4,W4-C04,data,normal,PutEvents with a matching event returns no failed entries and an event id,W4-C03,passx5,,match,match,match
+W4,W4-C05,functional,normal,A matching event is delivered to the target queue,W4-C04,passx5,,match,match,match
+W4,W4-C06,data,normal,"The delivered event has the standard envelope with the sent source, detail-type and detail",W4-C05,passx5,,match,mismatch,match
+W4,W4-C07,functional,normal,"Events with another detail-type, another source or a small amount are not delivered",W4-C05,passx5,,match,match,match
+W4,W4-C08,functional,normal,Numeric matching '> 100' drops amount 100 and delivers amount 100.5,W4-C05,passx5,,match,match,match
+W4,W4-C09,control,normal,"A second rule using exists, anything-but and prefix gets a target with an input transformer",W4-C01,passx5,,match,match,match
+W4,W4-C10,data,normal,The input transformer delivers exactly the templated JSON,W4-C09,passx5,,match,match,match
+W4,W4-C11,functional,normal,"The second rule drops events without the field, with the excluded value or another prefix",W4-C10,passx5,,match,match,match
+W4,W4-C12,functional,normal,After DisableRule the rule shows DISABLED and stops delivering while the other rule still delivers,W4-C05 W4-C10,passx5,,match,match,match
+W4,W4-C13,control,normal,ListRules with the name prefix returns both rules,W4-C02 W4-C09,passx5,,match,match,match
+W4,W4-C14,control,normal,CreateTopic with tags returns an ARN ending in the topic name,W4-C01,passx5,,match,match,match
+W4,W4-C15,control,normal,Subscribing two SQS queues with filter policies returns confirmed subscription ARNs,W4-C14,passx5,,match,match,match
+W4,W4-C16,control,normal,"GetSubscriptionAttributes returns the filter policy, its scope and raw delivery",W4-C15,passx5,,match,match,mismatch
+W4,W4-C17,data,normal,"A message matching the attribute filter arrives raw, with its message attributes",W4-C15,passx5,,match,match,match
+W4,W4-C18,functional,normal,"Messages with a small amount, another event or no attributes are filtered out",W4-C17,passx5,,match,match,match
+W4,W4-C19,data,normal,A message matching the body filter arrives wrapped in the SNS notification envelope,W4-C15,passx5,,match,mismatch,match
+W4,W4-C20,functional,normal,A message whose body does not match the body filter is filtered out,W4-C19,passx5,,match,match,match
+W4,W4-C21,functional,normal,PublishBatch of three messages succeeds and only the two matching ones arrive,W4-C18,passx5,,match,match,match
+W4,W4-C22,control,normal,ListSubscriptionsByTopic shows the two SQS subscriptions,W4-C15,passx5,,match,match,match
+W4,W4-C23,data,negative,PutRule with an event pattern that is not valid JSON is rejected,W4-C01,passx5,InvalidEventPatternException,match,match,match
+W4,W4-C24,data,negative,PutRule with a pattern value that is not an array is rejected,W4-C01,passx5,InvalidEventPatternException,match,false_success_a,match
+W4,W4-C25,data,negative,PutRule with the schedule expression rate(0 minutes) is rejected,W4-C01,passx5,ValidationException,match,match,false_success_a
+W4,W4-C26,data,negative,PutEvents with a Detail that is not JSON reports the entry as failed,W4-C01,passx5,MalformedDetail,match,match,false_success_a
+W4,W4-C27,data,negative,PutEvents with 11 entries (maximum 10) is rejected,W4-C01,passx5,ValidationException,match,false_success_a,match
+W4,W4-C28,control,negative,CreateTopic with a space and '!' in the name is rejected,W4-C01,passx5,InvalidParameter,match,false_success_a,false_success_a
+W4,W4-C29,data,negative,Subscribe with a filter policy whose value is not an array is rejected,W4-C14,passx5,InvalidParameter,match,match,false_success_a
+W4,W4-C30,data,negative,Publish with a Number message attribute that is not a number is rejected,W4-C14,passx5,ParameterValueInvalid,match,false_success_a,false_success_a
+W4,W4-C31,data,negative,Publish with a message over 256 KB is rejected,W4-C14,passx5,InvalidParameter,match,match,match
+W4,W4-C32,control,negative,Publish to a topic that does not exist is rejected,W4-C01,passx5,NotFound,match,match,match
+W4,W4-C33,control,negative,SetSubscriptionAttributes with an unknown attribute name is rejected,W4-C15,passx5,InvalidParameter,match,false_success_a,match
+W4,W4-C34,control,normal,"Remove the targets, delete the rules, the topic and the queues",W4-C01,passx5,,match,match,match
+W4,W4-C35,control,normal,"After teardown the rules, the topic and the queues are gone",W4-C34,passx5,,match,match,match
+W5,W5-C01,control,normal,CreateBucket in the study region succeeds and HeadBucket finds it,,passx5,,match,match,match
+W5,W5-C02,control,normal,GetBucketLocation returns the study region,W5-C01,passx5,,match,match,match
+W5,W5-C03,control,normal,Versioning can be enabled and reads back as Enabled,W5-C01,passx5,,match,match,match
+W5,W5-C04,control,normal,"A lifecycle rule (expiry, noncurrent expiry, abort multipart) reads back unchanged",W5-C01,passx5,,match,match,match
+W5,W5-C05,control,normal,ListBuckets includes the bucket,W5-C01,passx5,,match,match,match
+W5,W5-C06,data,normal,"PutObject returns a version id, the body's MD5 as ETag, and default SSE-S3 encryption",W5-C03,passx5,,match,mismatch,mismatch
+W5,W5-C07,data,normal,"HeadObject returns content type, user metadata, length and encryption as written",W5-C06,passx5,,match,mismatch,mismatch
+W5,W5-C08,functional,normal,A second PutObject to the same key creates a new version; both versions read back,W5-C06,passx5,,match,match,match
+W5,W5-C09,functional,normal,ListObjectVersions shows two versions with only the newest marked latest,W5-C08,passx5,,match,match,match
+W5,W5-C10,functional,normal,DeleteObject without a version id adds a delete marker and the key reads as NoSuchKey,W5-C08,passx5,,match,match,match
+W5,W5-C11,functional,normal,ListObjectVersions shows the delete marker as latest and both versions kept,W5-C10,passx5,,match,match,match
+W5,W5-C12,functional,normal,An older version still reads by version id while the delete marker is current,W5-C10,passx5,,match,match,match
+W5,W5-C13,functional,normal,Deleting the delete marker restores the newest version,W5-C10,passx5,,match,match,match
+W5,W5-C14,functional,normal,A ranged GET returns 206 and exactly the requested bytes,W5-C13,passx5,,match,match,match
+W5,W5-C15,functional,normal,GetObject with If-None-Match of the current ETag returns 304 Not Modified,W5-C13,passx5,,match,match,match
+W5,W5-C16,functional,normal,A presigned GET URL downloads the object over plain HTTP,W5-C13,passx5,,match,match,match
+W5,W5-C17,functional,normal,A presigned PUT URL uploads an object over plain HTTP,W5-C03,passx5,,match,match,match
+W5,W5-C18,functional,normal,A 3-part multipart upload completes with an ETag ending in -3,W5-C03,passx5,,match,match,match
+W5,W5-C19,functional,normal,The multipart object downloads intact (size and SHA-256 match),W5-C18,passx5,,match,match,match
+W5,W5-C20,functional,normal,An unfinished multipart upload is listed and AbortMultipartUpload removes it,W5-C03,passx5,,match,match,match
+W5,W5-C21,functional,negative,A presigned GET URL is refused after it expires,W5-C16,passx5,AccessDenied,match,match,match
+W5,W5-C22,functional,negative,A presigned GET URL with an altered signature is refused,W5-C16,passx5,SignatureDoesNotMatch,match,false_success_a,false_success_a
+W5,W5-C23,data,negative,CompleteMultipartUpload with a non-final part under 5 MiB is rejected,W5-C03,passx5,EntityTooSmall,match,match,false_success_a
+W5,W5-C24,data,negative,CompleteMultipartUpload with a wrong part ETag is rejected,W5-C03,passx5,InvalidPart,match,match,match
+W5,W5-C25,data,negative,CompleteMultipartUpload with parts out of order is rejected,W5-C03,passx5,InvalidPartOrder,match,match,match
+W5,W5-C26,data,negative,PutObject with If-None-Match: * on an existing key is rejected,W5-C13,passx5,PreconditionFailed,match,match,match
+W5,W5-C27,data,negative,GetObject with a version id that does not exist is rejected,W5-C06,passx5,InvalidArgument,match,match,mismatch
+W5,W5-C28,control,negative,"CreateBucket with an invalid name (uppercase, underscore) is rejected",,passx5,InvalidBucketName,match,false_success_a,match
+W5,W5-C29,control,negative,A lifecycle rule with Expiration Days 0 is rejected,W5-C04,passx5,InvalidArgument,match,false_success_a,match
+W5,W5-C30,control,negative,DeleteBucket on a bucket that still holds objects is rejected,W5-C06,passx5,BucketNotEmpty,match,match,match
+W5,W5-C31,control,normal,"Delete every version, delete marker and the bucket without errors",W5-C01,passx5,,match,match,match
+W5,W5-C32,control,normal,"After deletion, HeadBucket reports the bucket gone",W5-C31,passx5,,match,match,match
+W6,W6-C01,control,normal,ValidateTemplate accepts the template and lists its two parameters,,passx5,,match,false_failure,false_failure
+W6,W6-C02,control,normal,CreateStack reaches CREATE_COMPLETE,,passx5,,match,match,false_failure
+W6,W6-C03,control,normal,Every resource in the stack is CREATE_COMPLETE,W6-C02,passx5,,match,match,blocked
+W6,W6-C04,data,normal,The stack returns all ten outputs,W6-C02,passx5,,match,match,blocked
+W6,W6-C05,control,normal,The VPC has two public subnets in different AZs and a default route to the internet gateway,W6-C04,passx5,,match,match,blocked
+W6,W6-C06,control,normal,The ALB is an active internet-facing application load balancer with an HTTP:80 listener and an IP target group,W6-C04,passx5,,match,match,blocked
+W6,W6-C07,functional,normal,The ECS service is ACTIVE on FARGATE with one running task,W6-C04,passx5,,match,match,blocked
+W6,W6-C08,functional,normal,The task registers as a healthy target in the target group,W6-C06 W6-C07,passx5,,match,match,blocked
+W6,W6-C09,data,normal,HTTP GET through the ALB returns 200 and the nginx page,W6-C08,passx5,,false_failure,match,blocked
+W6,W6-C10,control,normal,The regional web ACL with two rules is associated with the ALB,W6-C04,passx5,,match,false_failure,blocked
+W6,W6-C11,functional,normal,The WAF blocks a request for /admin through the ALB with 403,W6-C09 W6-C10,passx5,,blocked,false_failure,blocked
+W6,W6-C12,functional,normal,The WAF blocks the study header with 403 while a normal request still gets 200,W6-C11,passx5,,blocked,false_failure,blocked
+W6,W6-C13,control,normal,The CloudFront distribution is Deployed and enabled with the ALB as its origin,W6-C04,passx5,,match,match,blocked
+W6,W6-C14,data,normal,"HTTP GET through CloudFront returns 200 and the nginx page, served by CloudFront",W6-C09 W6-C13,passx5,,blocked,false_failure,blocked
+W6,W6-C15,functional,normal,A request for /admin through CloudFront is blocked by the ALB's WAF with 403,W6-C11 W6-C14,passx5,,blocked,blocked,blocked
+W6,W6-C16,control,normal,A change set setting DesiredCount to 2 in the template shows only an in-place Modify of the service,W6-C02,passx5,,match,match,blocked
+W6,W6-C17,functional,normal,UpdateStack setting DesiredCount to 2 in the template completes and the service runs two tasks,W6-C07,passx5,,match,match,blocked
+W6,W6-C18,data,negative,ValidateTemplate with a template that is not valid JSON is rejected,,passx5,ValidationError,match,match,match
+W6,W6-C19,data,negative,ValidateTemplate with an unknown resource type is rejected,,passx5,ValidationError,match,false_success_a,match
+W6,W6-C20,data,negative,ValidateTemplate with a Ref to an undefined resource is rejected,,passx5,ValidationError,match,false_success_a,false_success_a
+W6,W6-C21,control,negative,CreateStack without a required parameter is rejected,,passx5,ValidationError,match,match,match
+W6,W6-C22,control,negative,CreateStack with the name of an existing stack is rejected,W6-C02,passx5,AlreadyExistsException,match,match,blocked
+W6,W6-C23,control,negative,UpdateStack with no changes is rejected,W6-C17,passx5,ValidationError,match,match,blocked
+W6,W6-C24,functional,negative,A stack with an out-of-range SQS VisibilityTimeout fails and rolls back,,passx5,ROLLBACK_COMPLETE,match,false_success_a,match
+W6,W6-C25,data,negative,CreateStack with an invalid stack name is rejected,,passx5,ValidationError,match,false_success_a,match
+W6,W6-C26,control,normal,DeleteStack removes every study stack (DELETE_COMPLETE),,passx5,,match,match,match
+W6,W6-C27,control,normal,"After deletion the stack, the ALB and the distribution are gone",W6-C26,passx5,,match,match,blocked

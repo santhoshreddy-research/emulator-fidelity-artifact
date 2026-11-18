@@ -1,0 +1,246 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Emulator study W6: VPC with two public subnets, an internet-facing ALB, an ECS Fargate service running nginx, a regional WAF web ACL on the ALB, and a CloudFront distribution with the ALB as origin.",
+  "Parameters": {
+    "AlbName": {
+      "Type": "String",
+      "MaxLength": 32,
+      "AllowedPattern": "^[a-zA-Z0-9][a-zA-Z0-9-]*[a-zA-Z0-9]$",
+      "Description": "Name of the load balancer (it starts with the study prefix, so the study role may delete its listener)"
+    },
+    "Image": {
+      "Type": "String",
+      "Default": "public.ecr.aws/docker/library/nginx:alpine"
+    }
+  },
+  "Resources": {
+    "Vpc": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.42.0.0/16",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}, {"Key": "Name", "Value": {"Ref": "AlbName"}}]
+      }
+    },
+    "Igw": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {"Tags": [{"Key": "Project", "Value": "emulator-study"}]}
+    },
+    "IgwAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {"VpcId": {"Ref": "Vpc"}, "InternetGatewayId": {"Ref": "Igw"}}
+    },
+    "SubnetA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {"Ref": "Vpc"},
+        "CidrBlock": "10.42.1.0/24",
+        "AvailabilityZone": {"Fn::Select": [0, {"Fn::GetAZs": ""}]},
+        "MapPublicIpOnLaunch": true,
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "SubnetB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "VpcId": {"Ref": "Vpc"},
+        "CidrBlock": "10.42.2.0/24",
+        "AvailabilityZone": {"Fn::Select": [1, {"Fn::GetAZs": ""}]},
+        "MapPublicIpOnLaunch": true,
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "RouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {"VpcId": {"Ref": "Vpc"}, "Tags": [{"Key": "Project", "Value": "emulator-study"}]}
+    },
+    "DefaultRoute": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "IgwAttachment",
+      "Properties": {"RouteTableId": {"Ref": "RouteTable"}, "DestinationCidrBlock": "0.0.0.0/0", "GatewayId": {"Ref": "Igw"}}
+    },
+    "SubnetARoutes": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {"SubnetId": {"Ref": "SubnetA"}, "RouteTableId": {"Ref": "RouteTable"}}
+    },
+    "SubnetBRoutes": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {"SubnetId": {"Ref": "SubnetB"}, "RouteTableId": {"Ref": "RouteTable"}}
+    },
+    "AlbSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Study ALB: HTTP from anywhere",
+        "VpcId": {"Ref": "Vpc"},
+        "SecurityGroupIngress": [{"IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "CidrIp": "0.0.0.0/0"}],
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "TaskSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Study tasks: HTTP from the ALB only",
+        "VpcId": {"Ref": "Vpc"},
+        "SecurityGroupIngress": [{"IpProtocol": "tcp", "FromPort": 80, "ToPort": 80,
+                                  "SourceSecurityGroupId": {"Ref": "AlbSecurityGroup"}}],
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "Alb": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "DependsOn": "DefaultRoute",
+      "Properties": {
+        "Name": {"Ref": "AlbName"},
+        "Type": "application",
+        "Scheme": "internet-facing",
+        "Subnets": [{"Ref": "SubnetA"}, {"Ref": "SubnetB"}],
+        "SecurityGroups": [{"Ref": "AlbSecurityGroup"}],
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "TargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "VpcId": {"Ref": "Vpc"},
+        "Protocol": "HTTP",
+        "Port": 80,
+        "TargetType": "ip",
+        "HealthCheckPath": "/",
+        "HealthCheckIntervalSeconds": 10,
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 2,
+        "TargetGroupAttributes": [{"Key": "deregistration_delay.timeout_seconds", "Value": "5"}],
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "Listener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "LoadBalancerArn": {"Ref": "Alb"},
+        "Protocol": "HTTP",
+        "Port": 80,
+        "DefaultActions": [{"Type": "forward", "TargetGroupArn": {"Ref": "TargetGroup"}}]
+      }
+    },
+    "Cluster": {
+      "Type": "AWS::ECS::Cluster",
+      "Properties": {"Tags": [{"Key": "Project", "Value": "emulator-study"}]}
+    },
+    "TaskDefinition": {
+      "Type": "AWS::ECS::TaskDefinition",
+      "Properties": {
+        "Family": {"Fn::Sub": "${AlbName}-web"},
+        "Cpu": "256",
+        "Memory": "512",
+        "NetworkMode": "awsvpc",
+        "RequiresCompatibilities": ["FARGATE"],
+        "ContainerDefinitions": [{
+          "Name": "web",
+          "Image": {"Ref": "Image"},
+          "Essential": true,
+          "PortMappings": [{"ContainerPort": 80, "Protocol": "tcp"}]
+        }],
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "Service": {
+      "Type": "AWS::ECS::Service",
+      "DependsOn": "Listener",
+      "Properties": {
+        "Cluster": {"Ref": "Cluster"},
+        "TaskDefinition": {"Ref": "TaskDefinition"},
+        "LaunchType": "FARGATE",
+        "DesiredCount": 1,
+        "HealthCheckGracePeriodSeconds": 30,
+        "NetworkConfiguration": {
+          "AwsvpcConfiguration": {
+            "AssignPublicIp": "ENABLED",
+            "Subnets": [{"Ref": "SubnetA"}, {"Ref": "SubnetB"}],
+            "SecurityGroups": [{"Ref": "TaskSecurityGroup"}]
+          }
+        },
+        "LoadBalancers": [{"ContainerName": "web", "ContainerPort": 80, "TargetGroupArn": {"Ref": "TargetGroup"}}],
+        "PropagateTags": "SERVICE",
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "WebAcl": {
+      "Type": "AWS::WAFv2::WebACL",
+      "Properties": {
+        "Name": {"Fn::Sub": "${AlbName}-acl"},
+        "Scope": "REGIONAL",
+        "DefaultAction": {"Allow": {}},
+        "VisibilityConfig": {"SampledRequestsEnabled": false, "CloudWatchMetricsEnabled": false, "MetricName": "studyacl"},
+        "Rules": [
+          {
+            "Name": "block-admin-path",
+            "Priority": 0,
+            "Action": {"Block": {}},
+            "Statement": {"ByteMatchStatement": {
+              "SearchString": "/admin",
+              "FieldToMatch": {"UriPath": {}},
+              "PositionalConstraint": "STARTS_WITH",
+              "TextTransformations": [{"Priority": 0, "Type": "NONE"}]
+            }},
+            "VisibilityConfig": {"SampledRequestsEnabled": false, "CloudWatchMetricsEnabled": false, "MetricName": "blockadmin"}
+          },
+          {
+            "Name": "block-study-header",
+            "Priority": 1,
+            "Action": {"Block": {}},
+            "Statement": {"ByteMatchStatement": {
+              "SearchString": "1",
+              "FieldToMatch": {"SingleHeader": {"Name": "x-study-block"}},
+              "PositionalConstraint": "EXACTLY",
+              "TextTransformations": [{"Priority": 0, "Type": "NONE"}]
+            }},
+            "VisibilityConfig": {"SampledRequestsEnabled": false, "CloudWatchMetricsEnabled": false, "MetricName": "blockheader"}
+          }
+        ],
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    },
+    "WebAclAssociation": {
+      "Type": "AWS::WAFv2::WebACLAssociation",
+      "Properties": {"ResourceArn": {"Ref": "Alb"}, "WebACLArn": {"Fn::GetAtt": ["WebAcl", "Arn"]}}
+    },
+    "Distribution": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Enabled": true,
+          "Comment": {"Ref": "AlbName"},
+          "PriceClass": "PriceClass_100",
+          "HttpVersion": "http2",
+          "Origins": [{
+            "Id": "alb",
+            "DomainName": {"Fn::GetAtt": ["Alb", "DNSName"]},
+            "CustomOriginConfig": {"OriginProtocolPolicy": "http-only", "HTTPPort": 80, "HTTPSPort": 443}
+          }],
+          "DefaultCacheBehavior": {
+            "TargetOriginId": "alb",
+            "ViewerProtocolPolicy": "allow-all",
+            "AllowedMethods": ["GET", "HEAD"],
+            "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+            "OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+          }
+        },
+        "Tags": [{"Key": "Project", "Value": "emulator-study"}]
+      }
+    }
+  },
+  "Outputs": {
+    "VpcId": {"Value": {"Ref": "Vpc"}},
+    "SubnetIds": {"Value": {"Fn::Join": [",", [{"Ref": "SubnetA"}, {"Ref": "SubnetB"}]]}},
+    "AlbArn": {"Value": {"Ref": "Alb"}},
+    "AlbDns": {"Value": {"Fn::GetAtt": ["Alb", "DNSName"]}},
+    "TargetGroupArn": {"Value": {"Ref": "TargetGroup"}},
+    "ClusterName": {"Value": {"Ref": "Cluster"}},
+    "ServiceName": {"Value": {"Fn::GetAtt": ["Service", "Name"]}},
+    "WebAclArn": {"Value": {"Fn::GetAtt": ["WebAcl", "Arn"]}},
+    "DistributionId": {"Value": {"Ref": "Distribution"}},
+    "DistributionDomain": {"Value": {"Fn::GetAtt": ["Distribution", "DomainName"]}}
+  }
+}
